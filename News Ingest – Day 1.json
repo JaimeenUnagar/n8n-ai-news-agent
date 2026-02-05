@@ -1,0 +1,770 @@
+{
+  "name": "News Ingest – Day 1",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        -160
+      ],
+      "id": "ff188430-c846-48dd-a362-f9a5da3d0015",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -512,
+        128
+      ],
+      "id": "d7a7532e-0609-43e0-aa9a-11529135a0c2",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "url": "http://feeds.marketwatch.com/marketwatch/topstories/",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        96,
+        -160
+      ],
+      "id": "5e9c1e58-227f-480e-9322-6130ca5c6c15",
+      "name": "FIN - MarketWatch"
+    },
+    {
+      "parameters": {
+        "url": "http://rss.cnn.com/rss/money_topstories.rss",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        96,
+        -16
+      ],
+      "id": "0a032fc0-0aef-4a89-b6e1-2b2d059873e7",
+      "name": "FIN - CNN Money"
+    },
+    {
+      "parameters": {
+        "url": "https://www.nasdaq.com/feed/rssoutbound?category=Markets",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        96,
+        128
+      ],
+      "id": "ba81263a-b1a3-4f2c-811a-22bef7a1974f",
+      "name": "FIN - Nasdaq Markets"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        416,
+        -96
+      ],
+      "id": "4aa13b24-c593-4f7e-9107-3a7792ac0532",
+      "name": "Merge – Finance (1)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        720,
+        112
+      ],
+      "id": "cda99664-2bf2-4237-8dd9-90a59874395a",
+      "name": "Merge – Finance (2)"
+    },
+    {
+      "parameters": {
+        "jsCode": "function cleanText(x) {\n  if (!x) return \"\";\n  return String(x)\n    .replace(/<[^>]*>/g, \" \")\n    .replace(/\\s+/g, \" \")\n    .trim();\n}\n\nfunction canonicalizeUrl(url) {\n  if (!url) return \"\";\n  try {\n    const u = new URL(url);\n    const dropParams = [\n      \"utm_source\",\"utm_medium\",\"utm_campaign\",\"utm_term\",\"utm_content\",\n      \"ref\",\"source\",\"smid\",\"cmpid\",\"guccounter\",\"guce_referrer\",\"guce_referrer_sig\"\n    ];\n    dropParams.forEach(p => u.searchParams.delete(p));\n    u.hash = \"\";\n    return u.toString();\n  } catch (e) {\n    return url;\n  }\n}\n\nfunction guessSource(item) {\n  const url = item.link || item.url || \"\";\n  if (item.source) return cleanText(item.source);\n  if (item.creator) return cleanText(item.creator);\n  try {\n    const u = new URL(url);\n    return u.hostname.replace(\"www.\", \"\");\n  } catch (e) {\n    return \"unknown\";\n  }\n}\n\nfunction toISODate(item) {\n  const dt = item.isoDate || item.pubDate || item.published || item.date || \"\";\n  const d = dt ? new Date(dt) : null;\n  if (!d || isNaN(d.getTime())) return null;\n  return d.toISOString();\n}\n\nreturn items.map(({ json }) => {\n  const title = cleanText(json.title || json.titleText || \"\");\n  const rawUrl = json.link || json.url || \"\";\n  const url = canonicalizeUrl(rawUrl);\n\n  const snippet =\n    cleanText(json.contentSnippet || json.summary || json.content || json.description || \"\");\n\n  const published_at = toISODate(json);\n\n  return {\n    json: {\n      title,\n      url,\n      source: guessSource(json),\n      published_at,\n      snippet,\n      raw: json\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        112
+      ],
+      "id": "d79c0911-ac8a-40e0-ba7a-b734a5ef7440",
+      "name": "Normalize Article"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require(\"crypto\");\n\nreturn items.map(item => {\n  const url = item.json.url || \"\";\n  const title = item.json.title || \"\";\n\n  // Primary dedupe key = URL\n  // Fallback = title (if url missing)\n  const keyBase = url || title;\n\n  const url_hash = crypto\n    .createHash(\"sha1\")\n    .update(keyBase)\n    .digest(\"hex\");\n\n  item.json.url_hash = url_hash;\n  return item;\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        112
+      ],
+      "id": "a76460b0-02a7-414c-b8a0-5fa11e3fdbd2",
+      "name": "Create Hash"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This uses n8n workflow static data as a small key-value store\n// Perfect for dedupe in demos\n\nconst staticData = $getWorkflowStaticData('global');\n\n// initialize store if missing\nif (!staticData.seen) {\n  staticData.seen = {};\n}\n\nconst output = [];\n\nfor (const item of items) {\n  const hash = item.json.url_hash;\n\n  if (!hash) {\n    // if somehow no hash, let it pass\n    item.json.is_duplicate = false;\n    output.push(item);\n    continue;\n  }\n\n  if (staticData.seen[hash]) {\n    // already seen\n    item.json.is_duplicate = true;\n  } else {\n    // first time\n    staticData.seen[hash] = Date.now();\n    item.json.is_duplicate = false;\n    output.push(item); // only pass NEW items forward\n  }\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        112
+      ],
+      "id": "add9962e-e058-4836-953e-5ae217d14e13",
+      "name": "Dedupe – Static Store"
+    },
+    {
+      "parameters": {
+        "jsCode": "function containsAny(text, keywords) {\n  const t = (text || \"\").toLowerCase();\n  return keywords.some(k => t.includes(k));\n}\n\nconst financeKeywords = [\n  \"stock\",\"stocks\",\"market\",\"markets\",\"nasdaq\",\"dow\",\"s&p\",\"sp500\",\"earnings\",\"revenue\",\n  \"fed\",\"inflation\",\"interest rate\",\"rates\",\"bond\",\"treasury\",\"yield\",\"ipo\",\"merger\",\n  \"acquisition\",\"crypto\",\"bitcoin\",\"sec\",\"quarter\",\"guidance\",\"shares\"\n];\n\nconst techKeywords = [\n  \"ai\",\"artificial intelligence\",\"openai\",\"google\",\"microsoft\",\"apple\",\"amazon\",\"meta\",\n  \"startup\",\"software\",\"saas\",\"cloud\",\"cybersecurity\",\"security\",\"breach\",\"chip\",\"nvidia\",\n  \"tesla\",\"iphone\",\"android\",\"github\",\"product launch\",\"api\",\"data\"\n];\n\nconst sportsKeywords = [\n  \"nba\",\"nfl\",\"mlb\",\"nhl\",\"epl\",\"uefa\",\"fifa\",\"cricket\",\"test match\",\"odi\",\"t20\",\n  \"football\",\"soccer\",\"match\",\"league\",\"trade\",\"injury\",\"coach\",\"tournament\",\"goal\",\n  \"score\",\"playoffs\"\n];\n\nreturn items.map(item => {\n  const title = item.json.title || \"\";\n  const snippet = item.json.snippet || \"\";\n  const source = (item.json.source || \"\").toLowerCase();\n\n  const text = `${title} ${snippet}`.toLowerCase();\n\n  let domain = \"other\";\n  let confidence = 0.55;\n\n  // Strong source hints\n  if (source.includes(\"espn\") || source.includes(\"bbci.co.uk/sport\") || source.includes(\"bbc.co.uk\")) {\n    if (containsAny(text, sportsKeywords)) { domain = \"sports\"; confidence = 0.85; }\n  }\n\n  // Keyword-based classification\n  const isFinance = containsAny(text, financeKeywords);\n  const isTech = containsAny(text, techKeywords);\n  const isSports = containsAny(text, sportsKeywords);\n\n  // Resolve overlaps\n  const hits = [\n    {d:\"finance\", v:isFinance},\n    {d:\"tech\", v:isTech},\n    {d:\"sports\", v:isSports},\n  ].filter(x => x.v);\n\n  if (hits.length === 1) {\n    domain = hits[0].d;\n    confidence = 0.80;\n  } else if (hits.length > 1) {\n    // Tie-break: prefer sports if sports terms show up, else finance, else tech\n    if (isSports) { domain = \"sports\"; confidence = 0.72; }\n    else if (isFinance) { domain = \"finance\"; confidence = 0.70; }\n    else { domain = \"tech\"; confidence = 0.70; }\n  }\n\n  item.json.domain = domain;\n  item.json.confidence = confidence;\n\n  return item;\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        112
+      ],
+      "id": "1a53b2e0-93fe-4616-92b6-4284e64ab9ce",
+      "name": "Domain Classifier"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.domain}}",
+                    "rightValue": "finance",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "f109fbf1-5f16-443c-8cc9-1bf9ff8d8341"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "99ca7118-8f95-4f68-a95d-b8915b3d36a0",
+                    "leftValue": "={{$json.domain}}",
+                    "rightValue": "tech",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "02a0ad9d-1755-42da-91ed-6cccc9d65d3c",
+                    "leftValue": "={{$json.domain}}",
+                    "rightValue": "sports",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1744,
+        96
+      ],
+      "id": "fff04615-a4f8-4dc5-b135-2143cc827285",
+      "name": "Route by Domain"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AD0QF9CJJ",
+          "mode": "list",
+          "cachedResultName": "news-finance"
+        },
+        "text": "=:moneybag: *Finance* (conf {{$json.confidence}})\n*{{$json.title}}*\n{{$json.url}}\n\n{{$json.output}}\n\n_Source: {{$json.source}}_\n",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        2960,
+        -96
+      ],
+      "id": "5bb85b57-a9c6-41cb-9900-54a380c42694",
+      "name": "Slack – Finance",
+      "webhookId": "7609fd83-af60-48a0-a224-6c54d3c233fd",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "SeJHW8Ci3aGYfPYH",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AD2RZCYBC",
+          "mode": "list",
+          "cachedResultName": "news-tech"
+        },
+        "text": "=:computer: *Tech* (conf {{$json.confidence}}) *{{$json.title}}* {{$json.url}} _Source: {{$json.source}}_",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        2960,
+        128
+      ],
+      "id": "ae4136bd-20d1-4010-9934-765caa7ab8fb",
+      "name": "Send a message",
+      "webhookId": "b4eb9d6c-a355-4e77-b2a6-32bbb6c7e03d",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "SeJHW8Ci3aGYfPYH",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0ACZDJAFN1",
+          "mode": "list",
+          "cachedResultName": "news-sports"
+        },
+        "text": "=:soccer: *Sports* (conf {{$json.confidence}}) *{{$json.title}}* {{$json.url}} _Source: {{$json.source}}_",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        2960,
+        416
+      ],
+      "id": "2d4ab808-ce82-4988-8d59-1f229c28ac9e",
+      "name": "Send a message1",
+      "webhookId": "7bf61628-fb41-4ea1-98bf-3e6fb001b1ec",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "SeJHW8Ci3aGYfPYH",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "maxItems": 3
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        2208,
+        -48
+      ],
+      "id": "6a137203-ff70-42d5-a4f4-d1fd37ad4016",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Title: {{$json.title}}\nSource: {{$json.source}}\nSnippet: {{$json.snippet}}\nURL: {{$json.url}}\n",
+        "options": {
+          "systemMessage": "You are a finance news analyst.\n\nSummarize the given news article in 2 short sentences.\nThen add a third line:\n\nWhy it matters: ...\n\nRules:\n- Use only the given title and snippet.\n- Do not invent numbers, events, or facts.\n- If details are limited, say: \"Details are limited from the feed snippet.\"\n\nOutput exactly in this format:\n\nSummary: ...\nWhy it matters: ...\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2496,
+        -272
+      ],
+      "id": "5fe4c0ec-847d-40f5-a6fc-c0cc8cfa423a",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "maxItems": 3
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        2208,
+        112
+      ],
+      "id": "2f78972d-f6b7-4ac8-ae79-a242a8b5ac7c",
+      "name": "Limit1"
+    },
+    {
+      "parameters": {
+        "maxItems": 3
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        2208,
+        304
+      ],
+      "id": "c20a439b-b864-4220-88e5-4f364b3d8a8a",
+      "name": "Limit2"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2496,
+        -128
+      ],
+      "id": "4b72a905-dcf8-4544-a8e5-c138b8d88401",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "xLFmBmogbW18DuEq",
+          "name": "n8n free OpenAI API credits"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Title: {{$json.title}}\nSource: {{$json.source}}\nSnippet: {{$json.snippet}}\nURL: {{$json.url}}\n",
+        "options": {
+          "systemMessage": "You are a technology news analyst.\n\nSummarize the given news article in 2 short sentences.\nThen add a third line:\n\nWhy it matters: ...\n\nRules:\n- Focus on product, platform, AI, software, or market impact.\n- Use only the given title and snippet.\n- Do not inve\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2496,
+        64
+      ],
+      "id": "5661da4a-1ec8-4b86-86eb-17aaeaff6d17",
+      "name": "AI Agent1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Title: {{$json.title}}\nSource: {{$json.source}}\nSnippet: {{$json.snippet}}\nURL: {{$json.url}}\n",
+        "options": {
+          "systemMessage": "You are a sports news analyst.\n\nSummarize the given news update in 2 short sentences.\nThen add a third line:\n\nWhy it matters: ...\n\nRules:\n- Focus on match results, injuries, trades, team impact, or standings.\n- Use only the given title and snippet.\n- Do not invent scores, dates, or statistics.\n- If details are limited, say: \"Details are limited from the feed snippet.\"\n\nOutput exactly in this format:\n\nSummary: ...\nWhy it matters: ...\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2496,
+        352
+      ],
+      "id": "c85d0bf3-d11f-447d-896a-2ea971f9fc06",
+      "name": "AI Agent2"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2496,
+        208
+      ],
+      "id": "a71d15f7-26c6-4af6-aadd-802bdccc886f",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "xLFmBmogbW18DuEq",
+          "name": "n8n free OpenAI API credits"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2496,
+        496
+      ],
+      "id": "305f5dc8-9942-4c4f-ae46-1b8434a151a3",
+      "name": "OpenAI Chat Model2",
+      "credentials": {
+        "openAiApi": {
+          "id": "xLFmBmogbW18DuEq",
+          "name": "n8n free OpenAI API credits"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "FIN - MarketWatch",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "FIN - CNN Money",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "FIN - Nasdaq Markets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "FIN - MarketWatch",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "FIN - CNN Money",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "FIN - Nasdaq Markets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FIN - CNN Money": {
+      "main": [
+        [
+          {
+            "node": "Merge – Finance (1)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "FIN - MarketWatch": {
+      "main": [
+        [
+          {
+            "node": "Merge – Finance (1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FIN - Nasdaq Markets": {
+      "main": [
+        [
+          {
+            "node": "Merge – Finance (2)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge – Finance (1)": {
+      "main": [
+        [
+          {
+            "node": "Merge – Finance (2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge – Finance (2)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Article": {
+      "main": [
+        [
+          {
+            "node": "Create Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Hash": {
+      "main": [
+        [
+          {
+            "node": "Dedupe – Static Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe – Static Store": {
+      "main": [
+        [
+          {
+            "node": "Domain Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Domain Classifier": {
+      "main": [
+        [
+          {
+            "node": "Route by Domain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Domain": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Limit1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Limit2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Slack – Finance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit2": {
+      "main": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent2": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "26822556-8afe-43fe-b0b3-bf2405656b0a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "18c3aa9a63d41b0621c35641d6d4d8ff39cae590debd9f0abe3f9b76994b5e03"
+  },
+  "id": "3D_Gs58jiVvYNS19Mp9O8",
+  "tags": []
+}
