@@ -17,6 +17,10 @@ RSS → Normalize → Dedupe → Domain Classifier → AI Agent → Slack
 
 Each domain (finance, tech, sports) uses a separate AI agent with domain-specific prompting.
 
+## Workflow
+
+![n8n AI News Agent Workflow](images/workflow.png)
+
 ## Features
 
 - Multi-source ingestion
